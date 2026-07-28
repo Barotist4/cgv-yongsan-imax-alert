@@ -50,10 +50,10 @@ try {
   await page.goto(CGV_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.getByRole("button", { name: "예매·예약", exact: true }).click();
   await page.getByRole("button", { name: MOVIE, exact: true }).click();
-  await page.getByRole("button", { name: "IMAX", exact: true }).click();
 
   const theater = page.getByRole("button", { name: "용산아이파크몰", exact: true });
-  if (await theater.count()) await theater.click();
+  await theater.click();
+  await page.getByRole("button", { name: "IMAX", exact: true }).click();
 
   await page.waitForTimeout(2500);
   const pageText = await page.locator("body").innerText();
@@ -82,6 +82,19 @@ try {
     });
     state.notified = [...new Set([...state.notified, ...newlyOpened])];
     await saveState(state);
+  }
+  if (process.env.SEND_TEST === "true") {
+    const chatId = await getChatId();
+    await telegram("sendMessage", {
+      chat_id: chatId,
+      text: [
+        "✅ CGV 알리미 연결 완료",
+        MOVIE,
+        "CGV 용산아이파크몰 IMAX",
+        "대상 날짜: 2026-08-07, 08-08, 08-09",
+        "앞으로 5분마다 확인합니다."
+      ].join("\n")
+    });
   }
   console.log(foundDates.length ? `감지: ${foundDates.join(", ")}` : "아직 대상 일정이 없습니다.");
 } finally {
