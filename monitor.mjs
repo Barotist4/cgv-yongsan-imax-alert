@@ -2,7 +2,13 @@ import { chromium } from "playwright";
 import fs from "node:fs/promises";
 
 const MOVIE = "스파이더맨-브랜드 뉴 데이";
-const DATES = ["2026-08-07", "2026-08-08", "2026-08-09"];
+const DATES = [
+  "2026-08-05",
+  "2026-08-06",
+  "2026-08-07",
+  "2026-08-08",
+  "2026-08-09"
+];
 const CGV_URL = "https://cgv.co.kr/cnm/cgvChart/movieChart/30001192";
 const STATE_FILE = new URL("./state.json", import.meta.url);
 
@@ -57,14 +63,42 @@ try {
   if (await closeModal.count()) await closeModal.click({ force: true });
   await page.getByRole("button", { name: "IMAX", exact: true }).click();
 
-  await page.waitForTimeout(2500);
-  const pageText = await page.locator("body").innerText();
-  const foundDates = DATES.filter((date) => {
-    const [year, month, day] = date.split("-");
-    return pageText.includes(date)
-      || pageText.includes(`${year}.${month}.${day}`)
-      || pageText.includes(`${Number(month)}월 ${Number(day)}일`);
-  });
+  await page.waitForTimeout(1500);
+
+  const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+  const foundDates = [];
+  for (const date of DATES) {
+    const parsed = new Date(`${date}T00:00:00Z`);
+    const weekday = weekdays[parsed.getUTCDay()];
+    const month = parsed.getUTCMonth() + 1;
+    const day = parsed.getUTCDate();
+    const dateName = new RegExp(`^${weekday}\\s+(?:${month}\\.)?0?${day}$`);
+    const dateButtons = page.getByRole("button", { name: dateName });
+
+    let clickableDateButton = null;
+    for (let index = 0; index < await dateButtons.count(); index += 1) {
+      const candidate = dateButtons.nth(index);
+      if (await candidate.isVisible() && await candidate.isEnabled()) {
+        clickableDateButton = candidate;
+        break;
+      }
+    }
+    if (!clickableDateButton) continue;
+
+    await clickableDateButton.click();
+    await page.waitForTimeout(700);
+
+    const hasImaxShowtime = await page.locator("h3").evaluateAll((headings) =>
+      headings.some((heading) => {
+        if (!heading.textContent?.trim().startsWith("IMAX관")) return false;
+        const section = heading.parentElement;
+        return [...(section?.querySelectorAll("button") ?? [])].some((button) =>
+          /\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b/.test(button.textContent ?? "")
+        );
+      })
+    );
+    if (hasImaxShowtime) foundDates.push(date);
+  }
 
   const state = await readState();
   const newlyOpened = foundDates.filter((date) => !state.notified.includes(date));
@@ -93,7 +127,7 @@ try {
         "✅ CGV 알리미 연결 완료",
         MOVIE,
         "CGV 용산아이파크몰 IMAX",
-        "대상 날짜: 2026-08-07, 08-08, 08-09",
+        "대상 날짜: 2026-08-05, 08-06, 08-07, 08-08, 08-09",
         "앞으로 5분마다 확인합니다."
       ].join("\n")
     });
