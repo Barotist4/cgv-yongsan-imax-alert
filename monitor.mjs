@@ -53,6 +53,8 @@ try {
 
   const theater = page.getByRole("button", { name: "용산아이파크몰", exact: true });
   await theater.click();
+  const closeModal = page.locator("button.btn-center-close");
+  if (await closeModal.count()) await closeModal.click({ force: true });
   await page.getByRole("button", { name: "IMAX", exact: true }).click();
 
   await page.waitForTimeout(2500);
