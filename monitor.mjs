@@ -1,5 +1,11 @@
 import { chromium } from "playwright";
 import fs from "node:fs/promises";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes
+} from "node:crypto";
 
 const MOVIE = "스파이더맨-브랜드 뉴 데이";
 const START_DATE = "2026-08-05";
@@ -21,12 +27,42 @@ async function telegram(method, payload = {}) {
   return result.result;
 }
 
-async function getChatId() {
+function chatIdKey() {
+  return createHash("sha256").update(token).digest();
+}
+
+function encryptChatId(chatId) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", chatIdKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(chatId, "utf8"), cipher.final()]);
+  return [iv, cipher.getAuthTag(), encrypted]
+    .map((value) => value.toString("base64url"))
+    .join(".");
+}
+
+function decryptChatId(value) {
+  try {
+    const [iv, tag, encrypted] = value.split(".").map((part) => Buffer.from(part, "base64url"));
+    const decipher = createDecipheriv("aes-256-gcm", chatIdKey(), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function getChatId(state) {
   if (configuredChatId) return configuredChatId;
+  const savedChatId = state.chatIdCipher ? decryptChatId(state.chatIdCipher) : null;
+  if (savedChatId) return savedChatId;
+
   const updates = await telegram("getUpdates");
   const chat = [...updates].reverse().find((item) => item.message?.chat?.id)?.message.chat.id;
   if (!chat) throw new Error("봇 채팅에서 /start를 보낸 뒤 다시 실행해 주세요.");
-  return String(chat);
+  const chatId = String(chat);
+  state.chatIdCipher = encryptChatId(chatId);
+  await saveState(state);
+  return chatId;
 }
 
 async function readState() {
@@ -118,7 +154,7 @@ try {
   const state = await readState();
   const newlyOpened = foundDates.filter((date) => !state.notified.includes(date));
   if (newlyOpened.length) {
-    const chatId = await getChatId();
+    const chatId = await getChatId(state);
     await telegram("sendMessage", {
       chat_id: chatId,
       text: [
@@ -135,7 +171,7 @@ try {
     await saveState(state);
   }
   if (process.env.SEND_TEST === "true") {
-    const chatId = await getChatId();
+    const chatId = await getChatId(state);
     await telegram("sendMessage", {
       chat_id: chatId,
       text: [
