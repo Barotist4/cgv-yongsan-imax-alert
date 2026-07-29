@@ -2,13 +2,7 @@ import { chromium } from "playwright";
 import fs from "node:fs/promises";
 
 const MOVIE = "스파이더맨-브랜드 뉴 데이";
-const DATES = [
-  "2026-08-05",
-  "2026-08-06",
-  "2026-08-07",
-  "2026-08-08",
-  "2026-08-09"
-];
+const START_DATE = "2026-08-05";
 const CGV_URL = "https://cgv.co.kr/cnm/cgvChart/movieChart/30001192";
 const STATE_FILE = new URL("./state.json", import.meta.url);
 
@@ -47,6 +41,27 @@ async function saveState(state) {
   await fs.writeFile(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`);
 }
 
+function visibleFutureDates() {
+  const todayInKorea = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+  const today = new Date(`${todayInKorea}T00:00:00Z`);
+  const dates = [];
+
+  // CGV가 한 번에 보여 주는 범위보다 넉넉하게 생성합니다.
+  // 실제 화면에 존재하고 활성화된 날짜만 아래에서 확인합니다.
+  for (let offset = 0; offset <= 14; offset += 1) {
+    const date = new Date(today);
+    date.setUTCDate(today.getUTCDate() + offset);
+    const isoDate = date.toISOString().slice(0, 10);
+    if (isoDate >= START_DATE) dates.push(isoDate);
+  }
+  return dates;
+}
+
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({
@@ -67,7 +82,7 @@ try {
 
   const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
   const foundDates = [];
-  for (const date of DATES) {
+  for (const date of visibleFutureDates()) {
     const parsed = new Date(`${date}T00:00:00Z`);
     const weekday = weekdays[parsed.getUTCDay()];
     const month = parsed.getUTCMonth() + 1;
@@ -127,7 +142,7 @@ try {
         "✅ CGV 알리미 연결 완료",
         MOVIE,
         "CGV 용산아이파크몰 IMAX",
-        "대상 날짜: 2026-08-05, 08-06, 08-07, 08-08, 08-09",
+        "대상 기간: 2026-08-05 이후 모든 공개 일정",
         "앞으로 5분마다 확인합니다."
       ].join("\n")
     });
