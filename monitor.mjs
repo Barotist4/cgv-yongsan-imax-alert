@@ -116,8 +116,13 @@ try {
 
   await page.waitForTimeout(1500);
 
+  const state = await readState();
+  state.notified ??= [];
+  state.imaxDateOpenings ??= {};
+
   const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
   const foundDates = [];
+  let openingHistoryChanged = false;
   for (const date of visibleFutureDates()) {
     const parsed = new Date(`${date}T00:00:00Z`);
     const weekday = weekdays[parsed.getUTCDay()];
@@ -136,6 +141,18 @@ try {
     }
     if (!clickableDateButton) continue;
 
+    if (!state.imaxDateOpenings[date]) {
+      state.imaxDateOpenings[date] = {
+        firstSeenAt: new Date().toISOString(),
+        firstSeenAtKst: new Intl.DateTimeFormat("ko-KR", {
+          timeZone: "Asia/Seoul",
+          dateStyle: "short",
+          timeStyle: "medium"
+        }).format(new Date())
+      };
+      openingHistoryChanged = true;
+    }
+
     await clickableDateButton.click();
     await page.waitForTimeout(700);
 
@@ -151,7 +168,8 @@ try {
     if (hasImaxShowtime) foundDates.push(date);
   }
 
-  const state = await readState();
+  if (openingHistoryChanged) await saveState(state);
+
   const newlyOpened = foundDates.filter((date) => !state.notified.includes(date));
   if (newlyOpened.length) {
     const chatId = await getChatId(state);
