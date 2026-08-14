@@ -1,5 +1,8 @@
 {
   "notified": [],
   "imaxDateOpenings": {},
-  "chatIdCipher": "hEYKoZ1CdHjoN4Sk.IWIcqvWCJOROKhALX9i9dQ.mwYl8enFnvgh2w"
+  "chatIdCipher": "hEYKoZ1CdHjoN4Sk.IWIcqvWCJOROKhALX9i9dQ.mwYl8enFnvgh2w",
+  "seenMovieDates": [],
+  "imaxDateBaselineReady": true,
+  "movieDateBaselineReady": true
 }
