@@ -7,8 +7,7 @@ import {
   randomBytes
 } from "node:crypto";
 
-const MOVIES = ["스파이더맨-브랜드 뉴 데이", "오디세이"];
-const CGV_URL = "https://cgv.co.kr/cnm/cgvChart/movieChart/30001192";
+const CGV_URL = "https://cgv.co.kr/cnm/movieBook/cinema";
 const STATE_FILE = new URL("./state.json", import.meta.url);
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -86,9 +85,9 @@ function visibleFutureDates() {
   const today = new Date(`${todayInKorea}T00:00:00Z`);
   const dates = [];
 
-  // CGV가 한 번에 보여 주는 범위보다 넉넉하게 생성합니다.
-  // 실제 화면에 존재하고 활성화된 날짜만 아래에서 확인합니다.
-  for (let offset = 0; offset <= 14; offset += 1) {
+  // CGV 달력에 한 달 뒤 특별 상영 일정이 먼저 열리는 경우도 있어
+  // 오늘부터 35일 뒤까지 화면에 실제로 존재하는 날짜를 확인합니다.
+  for (let offset = 0; offset <= 35; offset += 1) {
     const date = new Date(today);
     date.setUTCDate(today.getUTCDate() + offset);
     const isoDate = date.toISOString().slice(0, 10);
@@ -97,33 +96,35 @@ function visibleFutureDates() {
   return dates;
 }
 
-async function scanMovie(browser, movie) {
+async function scanYongsanImax(browser) {
   const page = await browser.newPage({
     locale: "ko-KR",
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36"
   });
   try {
     await page.goto(CGV_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.getByRole("button", { name: "예매·예약", exact: true }).click();
-    await page.getByRole("button", { name: movie, exact: true }).click();
-
     const theater = page.getByRole("button", { name: "용산아이파크몰", exact: true });
+    await theater.waitFor({ state: "visible", timeout: 30000 });
     await theater.click();
-    const closeModal = page.locator("button.btn-center-close");
-    if (await closeModal.count()) await closeModal.click({ force: true });
-    await page.getByRole("button", { name: "IMAX", exact: true }).click();
 
-    await page.waitForTimeout(1500);
+    await page.getByRole("button", { name: "극장 속성", exact: true }).click();
+    await page.getByRole("button", { name: "아이맥스", exact: true }).click();
+    await page.getByRole("button", { name: "확인", exact: true }).click();
+    await page.waitForTimeout(1000);
 
     const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
-    const availableDates = [];
-    const imaxDates = [];
-    for (const date of visibleFutureDates()) {
+    const scannedDates = [];
+    const imaxOpenDates = [];
+    const movieDates = {};
+
+    const futureDates = visibleFutureDates();
+    for (const date of futureDates) {
       const parsed = new Date(`${date}T00:00:00Z`);
       const weekday = weekdays[parsed.getUTCDay()];
-      const month = parsed.getUTCMonth() + 1;
       const day = parsed.getUTCDate();
-      const dateName = new RegExp(`^${weekday}\\s+(?:${month}\\.)?0?${day}$`);
+      const isToday = date === futureDates[0];
+      const prefix = isToday ? "(?:오늘|" + weekday + ")" : weekday;
+      const dateName = new RegExp(`^${prefix}\\s+0?${day}$`);
       const dateButtons = page.getByRole("button", { name: dateName });
 
       let clickableDateButton = null;
@@ -135,23 +136,52 @@ async function scanMovie(browser, movie) {
         }
       }
       if (!clickableDateButton) continue;
-      availableDates.push(date);
+      scannedDates.push(date);
 
       await clickableDateButton.click();
-      await page.waitForTimeout(700);
+      // 날짜를 바꾸면 CGV가 SPA 요청으로 시간표를 다시 그립니다.
+      // 너무 빨리 읽으면 이전/빈 화면을 보게 되므로 렌더링을 기다립니다.
+      await page.waitForTimeout(1200);
 
-      const hasImaxShowtime = await page.locator("h3").evaluateAll((headings) =>
-        headings.some((heading) => {
-          if (!heading.textContent?.trim().startsWith("IMAX관")) return false;
+      const schedule = await page.locator("h2").evaluateAll((headings) => {
+        // 종료 시각 바로 뒤에 잔여석 숫자가 붙어도 시간표로 인식합니다.
+        const timePattern = /\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}/;
+        const normalized = (value) => (value ?? "").replace(/\s+/g, " ").trim();
+        const foundMovies = [];
+        let hasImaxShowtime = false;
+
+        for (const heading of headings) {
           const section = heading.parentElement;
-          return [...(section?.querySelectorAll("button") ?? [])].some((button) =>
-            /\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b/.test(button.textContent ?? "")
+          if (!section) continue;
+          const screenHeadings = [...section.querySelectorAll("h3")];
+          const isImaxSection = screenHeadings.some((item) =>
+            normalized(item.textContent).includes("IMAX")
           );
-        })
-      );
-      if (hasImaxShowtime) imaxDates.push(date);
+          if (!isImaxSection) continue;
+          const hasTime = [...section.querySelectorAll("button")].some((button) =>
+            timePattern.test(normalized(button.textContent))
+          );
+          if (!hasTime) continue;
+
+          hasImaxShowtime = true;
+          const headingText = normalized(heading.textContent);
+          if (headingText) foundMovies.push(headingText);
+        }
+        return { hasImaxShowtime, foundMovies: [...new Set(foundMovies)] };
+      });
+
+      if (schedule.hasImaxShowtime) imaxOpenDates.push(date);
+      for (const movie of schedule.foundMovies) {
+        movieDates[movie] ??= [];
+        movieDates[movie].push(date);
+      }
     }
-    return { movie, availableDates, imaxDates };
+
+    if (!scannedDates.length) {
+      throw new Error("용산아이파크몰의 활성화된 예매 날짜를 찾지 못했습니다. CGV 화면 구조를 확인해 주세요.");
+    }
+
+    return { scannedDates, imaxOpenDates, movieDates };
   } finally {
     await page.close();
   }
@@ -169,21 +199,21 @@ function firstSeenRecord() {
   };
 }
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined
+});
 try {
   const state = await readState();
   state.imaxDateOpenings ??= {};
   state.seenMovieDates ??= [];
 
-  const results = [];
-  for (const movie of MOVIES) results.push(await scanMovie(browser, movie));
-
-  const availableDates = [...new Set(results.flatMap((result) => result.availableDates))].sort();
-  const newGeneralDates = availableDates.filter((date) => !state.imaxDateOpenings[date]);
+  const result = await scanYongsanImax(browser);
+  const newGeneralDates = result.imaxOpenDates.filter((date) => !state.imaxDateOpenings[date]);
   for (const date of newGeneralDates) state.imaxDateOpenings[date] = firstSeenRecord();
 
-  const movieDateKeys = results.flatMap((result) =>
-    result.imaxDates.map((date) => `${result.movie}|${date}`)
+  const movieDateKeys = Object.entries(result.movieDates).flatMap(([movie, dates]) =>
+    dates.map((date) => `${movie}|${date}`)
   );
   const seenMovieDates = new Set(state.seenMovieDates);
   const newlyOpenedMovieDates = movieDateKeys.filter((key) => !seenMovieDates.has(key));
@@ -236,13 +266,13 @@ try {
       text: [
         "✅ CGV 알리미 연결 완료",
         "CGV 용산아이파크몰 IMAX",
-        "영화: 스파이더맨-브랜드 뉴 데이, 오디세이",
+        "대상: 용산아이파크몰 IMAX의 모든 영화",
         "날짜 제한 없음",
         "새 예매 날짜와 실제 IMAX 상영시간을 계속 확인합니다."
       ].join("\n")
     });
   }
-  console.log(JSON.stringify({ availableDates, results }, null, 2));
+  console.log(JSON.stringify(result, null, 2));
 } finally {
   await browser.close();
 }
