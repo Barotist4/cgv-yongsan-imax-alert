@@ -102,9 +102,22 @@ async function scanYongsanImax(browser) {
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36"
   });
   try {
-    await page.goto(CGV_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+    const response = await page.goto(CGV_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     const theater = page.getByRole("button", { name: "용산아이파크몰", exact: true });
-    await theater.waitFor({ state: "visible", timeout: 30000 });
+    try {
+      await theater.waitFor({ state: "visible", timeout: 30000 });
+    } catch (error) {
+      const bodyPreview = (await page.locator("body").innerText().catch(() => ""))
+        .replace(/\s+/g, " ")
+        .slice(0, 2000);
+      console.error("CGV 진단", {
+        status: response?.status(),
+        url: page.url(),
+        title: await page.title(),
+        bodyPreview
+      });
+      throw error;
+    }
     await theater.click();
 
     await page.getByRole("button", { name: "극장 속성", exact: true }).click();
