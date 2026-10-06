@@ -1,8 +1,6 @@
 name: CGV 용산 IMAX 확인
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -14,7 +12,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
