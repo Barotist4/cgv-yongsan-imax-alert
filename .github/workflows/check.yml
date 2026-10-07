@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: cgv-yongsan-imax-alert
@@ -18,19 +18,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install
-      - run: npx playwright install --with-deps chromium
-      - name: CGV 확인
-        run: npm run check
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SEND_TEST: ${{ github.event_name == 'workflow_dispatch' }}
-      - name: 중복 알림 기록 저장
+      - name: CGV 읽기 전용 시간표 API 1회 확인
+        shell: bash
         run: |
-          if git diff --quiet -- state.json; then exit 0; fi
-          git config user.name "cgv-alert-bot"
-          git config user.email "cgv-alert-bot@users.noreply.github.com"
-          git add state.json
-          git commit -m "중복 알림 상태 갱신"
-          git push
+          node --input-type=module <<'NODE'
+          const url = new URL("https://cgv.co.kr/api/v1/booking/searchSiteScnscYmdListBySite");
+          url.search = new URLSearchParams({ coCd: "A420", siteNo: "0013" });
+          const response = await fetch(url, {
+            headers: {
+              accept: "application/json",
+              "accept-language": "ko-KR,ko;q=0.9",
+              referer: "https://cgv.co.kr/cnm/movieBook/cinema"
+            }
+          });
+          console.log(JSON.stringify({ status: response.status, contentType: response.headers.get("content-type") }));
+          const body = await response.text();
+          console.log(body.slice(0, 1500));
+          if (!response.ok) process.exit(1);
+          const parsed = JSON.parse(body);
+          if (parsed.statusCode !== 0) throw new Error(`CGV 응답 오류: ${parsed.statusCode}`);
+          console.log("READ_ONLY_API_OK");
+          NODE
